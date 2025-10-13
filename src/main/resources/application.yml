@@ -1,3 +1,4 @@
+
 server:
   port: 8080
 
@@ -5,8 +6,7 @@ cors:
   allowed-origins: "http://localhost:5173"
 
 # 카카오 REST API 키 주입
-# kakao:
-#   rest-api-key: ${KAKAO_REST_API_KEY}
+#kakao: rest-api-key: ${kakao.rest-api-key}\
 
 spring:
   datasource:
@@ -17,7 +17,7 @@ spring:
   jpa:
     show-sql: true
     hibernate:
-      ddl-auto: update # 데이터 손실 방지를 방지 위해 update 사용
+      ddl-auto: create
       dialect: org.hibernate.dialect.MySQLDialect
     properties:
       hibernate:
@@ -47,9 +47,3 @@ jwt:
   secret: ${JWT_SECRET}
   access-token-expiration: ${JWT_ACCESS_EXPIRATION}
   refresh-token-expiration: ${JWT_REFRESH_EXPIRATION}
-
-# AI API Keys (최상위 레벨)
-geminiapi:
-  key: ${GEMINI_API_KEY}
-
-chatkey: ${GPT_API_KEY}

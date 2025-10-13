@@ -134,6 +134,7 @@ public class SecurityConfig {
                         // UserController 매핑 반영
                         .requestMatchers(HttpMethod.POST, "/api/user/exist").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/user/join").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/clinics/search").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/user/me").hasRole(UserRoleType.USER.name())
                         .requestMatchers(HttpMethod.PUT, "/api/user/put").hasRole(UserRoleType.USER.name())
                         .requestMatchers(HttpMethod.DELETE, "/api/user/delete").hasRole(UserRoleType.USER.name())
