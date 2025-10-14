@@ -50,12 +50,17 @@ public class UserService extends DefaultOAuth2UserService implements UserDetails
      */
     @Transactional
     public Long addUser(UserRequest request) {
-
         // 1. 중복 유저 검사 진행
         if (userRepository.existsByUsername(request.getUsername())) {
             throw new IllegalArgumentException("해당 유저가 이미 존재합니다.");
         }
-        // 2. 중복 유저가 아닐 경우, 회원 정보 값 entity 설정
+
+        // 2. 중복 유저 검사 진행
+        if (userRepository.existsByEmail(request.getEmail())) {
+            throw new IllegalArgumentException("해당 이메일으로 가입한 유저가 이미 존재합니다.");
+        }
+
+        // 3. 중복 유저가 아닐 경우, 회원 정보 값 entity 설정
         UserEntity userEntity = UserEntity.builder()
                 .username(request.getUsername())
                 .password(passwordEncoder.encode(request.getPassword()))
@@ -105,7 +110,6 @@ public class UserService extends DefaultOAuth2UserService implements UserDetails
         userEntity.updateUser(request);
 
         return userRepository.save(userEntity).getId();
-
     }
 
     /**
