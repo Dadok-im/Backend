@@ -1,6 +1,7 @@
 package com.ayu.dadokim.business.counseling.repository;
 
 import com.ayu.dadokim.business.counseling.domain.ChatMessage;
+import com.ayu.dadokim.business.user.form.UserEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 import java.time.LocalDateTime;
@@ -18,4 +19,9 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessage, Long> 
 
     // 모든 채팅 기록을 오래된 순서(오름차순)로 정렬하여 조회하는 메서드
     List<ChatMessage> findAllByOrderByCreatedDateAsc();
+
+    List<ChatMessage> findByUserOrderByCreatedDateAsc(UserEntity user);
+    List<ChatMessage> findByUserAndCreatedDateBetweenOrderByCreatedDateAsc(
+            UserEntity user, LocalDateTime start, LocalDateTime end);
+
 }

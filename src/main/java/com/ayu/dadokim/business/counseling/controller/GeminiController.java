@@ -4,6 +4,7 @@ import com.ayu.dadokim.business.counseling.domain.ChatMessage;
 import com.ayu.dadokim.business.counseling.form.ChatRequestDTO;
 import com.ayu.dadokim.business.counseling.form.ChatResponseDTO;
 import com.ayu.dadokim.business.counseling.service.GeminiService;
+import com.ayu.dadokim.business.user.service.UserService;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.IOException;
@@ -12,44 +13,66 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/gemini")
-@CrossOrigin(origins = "http://localhost:5173") // React 개발 서버 허용
 public class GeminiController {
 
     private final GeminiService geminiService;
+    private final UserService userService;
 
-    public GeminiController(GeminiService geminiService) {
+    public GeminiController(GeminiService geminiService, UserService userService) {
         this.geminiService = geminiService;
+        this.userService = userService;
     }
 
     /**
-     * 사용자의 새로운 채팅 메시지를 처리하고 Gemini API 응답을 반환합니다.
-     * HTTP POST 요청을 통해 ChatRequestDTO를 받아 서비스 계층으로 전달합니다.
-     * URL: /api/gemini
+     * 💬 Gemini 심리상담 AI와의 대화 요청 처리
+     *
+     * 사용자의 메시지를 받아 Gemini API로 전송하고, 모델의 응답을 반환합니다.
+     * - 현재 로그인된 사용자는 JWT 인증을 통해 식별되며, `UserService.readUser()`를 통해 userId를 조회합니다.
+     * - GeminiService는 이전 대화 내역을 포함하여 컨텍스트 기반 응답을 생성합니다.
+     *
+     * [POST] /api/gemini
+     *
+     * @param request 사용자의 채팅 입력 내용 (ChatRequestDTO)
+     * @return Gemini 모델이 생성한 상담 응답 (ChatResponseDTO)
+     * @throws IOException Gemini API 통신 중 오류 발생 시
      */
     @PostMapping
     public ChatResponseDTO chat(@RequestBody ChatRequestDTO request) throws IOException {
-        return geminiService.getChatResponse(request);
+        return geminiService.getChatResponse(userService.readUser(), request);
     }
 
     /**
-     * 모든 채팅 기록을 조회합니다.
-     * 주로 초기 화면에서 이전 대화 내용을 불러오는 데 사용됩니다.
-     * URL: /api/gemini/history/all
+     * 📜 전체 상담 내역 조회
+     *
+     * 로그인한 사용자의 모든 상담 대화 이력을 조회합니다.
+     * - 과거의 모든 질문과 응답을 시간순으로 정렬하여 반환합니다.
+     *
+     * [GET] /api/gemini/history/all
+     *
+     * @return 사용자의 전체 상담 대화 목록 (List<ChatMessage>)
      */
     @GetMapping("/history/all")
     public List<ChatMessage> getFullChatHistory() {
-        return geminiService.getFullChatHistory();
+        return geminiService.getFullChatHistory(userService.readUser());
     }
 
     /**
-     * 특정 기간 동안의 채팅 기록을 조회합니다.
-     * URL: /api/gemini/history
-     * 예시: /api/gemini/history?startDate=2024-01-01T00:00:00&endDate=2024-01-31T23:59:59
+     * ⏰ 특정 기간의 상담 내역 조회
+     *
+     * 지정된 기간(`startDate` ~ `endDate`) 동안의 상담 기록만 조회합니다.
+     * - 날짜는 ISO-8601 형식(예: 2025-01-01T00:00:00)으로 전달해야 합니다.
+     *
+     * [GET] /api/gemini/history?startDate=...&endDate=...
+     *
+     * @param startDate 조회 시작 시각 (LocalDateTime)
+     * @param endDate   조회 종료 시각 (LocalDateTime)
+     * @return 지정된 기간 내의 상담 기록 (List<ChatMessage>)
      */
     @GetMapping("/history")
     public List<ChatMessage> getChatHistoryByDateRange(
             @RequestParam("startDate") LocalDateTime startDate,
-            @RequestParam("endDate") LocalDateTime endDate) {
-        return geminiService.getChatHistoryByDateRange(startDate, endDate);
+            @RequestParam("endDate") LocalDateTime endDate
+    ) {
+        return geminiService.getChatHistoryByDateRange(userService.readUser(), startDate, endDate);
     }
 }
