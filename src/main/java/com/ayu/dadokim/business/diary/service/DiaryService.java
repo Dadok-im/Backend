@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -18,9 +19,6 @@ public class DiaryService {
     private final DiaryRepository diaryRepository;
     private final UserRepository userRepository;
 
-    /**
-     * 일기 저장 또는 수정
-     */
     @Transactional
     public DiaryEntity saveDiary(LocalDate date, String text) {
         String username = SecurityContextHolder.getContext().getAuthentication().getName();
@@ -41,9 +39,6 @@ public class DiaryService {
                 ));
     }
 
-    /**
-     * 특정 날짜의 일기 조회
-     */
     @Transactional(readOnly = true)
     public DiaryEntity getDiary(LocalDate date) {
         String username = SecurityContextHolder.getContext().getAuthentication().getName();
@@ -51,5 +46,17 @@ public class DiaryService {
                 .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
 
         return diaryRepository.findByUserAndDate(user, date).orElse(null);
+    }
+
+    /**
+     * ✅ 전체 일기 목록 조회
+     */
+    @Transactional(readOnly = true)
+    public List<DiaryEntity> getAllDiaries() {
+        String username = SecurityContextHolder.getContext().getAuthentication().getName();
+        UserEntity user = userRepository.findByUsernameAndIsLock(username, false)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+
+        return diaryRepository.findAllByUser(user);
     }
 }

@@ -8,7 +8,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/diary")
@@ -20,7 +22,6 @@ public class DiaryController {
     /**
      * ✅ 일기 저장 또는 수정
      * POST /api/diary
-     * body: { "date": "2025-01-03", "diaryText": "오늘은 좋은 날씨였다." }
      */
     @PostMapping
     public ResponseEntity<Map<String, Object>> saveDiary(@RequestBody Map<String, String> body) {
@@ -53,4 +54,23 @@ public class DiaryController {
                 "diaryText", diary.getDiaryText()
         ));
     }
+
+    /**
+     * ✅ 전체 일기 목록 조회
+     * GET /api/diary/list
+     */
+    @GetMapping("/list")
+    public ResponseEntity<List<Map<String, Object>>> getAllDiaries() {
+        List<DiaryEntity> diaries = diaryService.getAllDiaries();
+
+        List<Map<String, Object>> response = diaries.stream()
+                .map(d -> Map.<String, Object>of(
+                        "date", d.getDate(),
+                        "diaryText", d.getDiaryText()
+                ))
+                .collect(Collectors.toList());
+
+        return ResponseEntity.ok(response);
+    }
+
 }
