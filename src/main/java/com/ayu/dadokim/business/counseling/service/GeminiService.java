@@ -15,6 +15,7 @@ import com.ayu.dadokim.business.user.form.UserEntity;
 import com.ayu.dadokim.business.user.repository.UserRepository;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -54,11 +55,12 @@ public class GeminiService {
      * @return Gemini 모델의 답변
      * @throws IOException API 통신 오류 발생 시
      */
-    public ChatResponseDTO getChatResponse(UserResponse userResponse, ChatRequestDTO request) throws IOException {
+    public ChatResponseDTO getChatResponse(ChatRequestDTO request) throws IOException {
 
-        // ① userId 기반 사용자 정보 조회
-        UserEntity user = userRepository.findByEmail(userResponse.email())
-                .orElseThrow(() -> new IllegalArgumentException("유효하지 않은 사용자입니다."));
+        // ① 유저 조회 (유효성 검사)
+        String username = SecurityContextHolder.getContext().getAuthentication().getName();
+        UserEntity user = userRepository.findByUsernameAndIsLock(username, false)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
 
         JSONArray contentsArray = new JSONArray();
 
@@ -167,18 +169,24 @@ public class GeminiService {
     /**
      * 특정 사용자(userId)의 지정된 기간 동안의 상담 기록 조회
      */
-    public List<ChatMessage> getChatHistoryByDateRange(UserResponse userResponse, LocalDateTime startDate, LocalDateTime endDate) {
-        UserEntity user = userRepository.findByEmail(userResponse.email())
-                .orElseThrow(() -> new IllegalArgumentException("유효하지 않은 사용자입니다."));
+    public List<ChatMessage> getChatHistoryByDateRange(LocalDateTime startDate, LocalDateTime endDate) {
+        // ① 유저 조회 (유효성 검사)
+        String username = SecurityContextHolder.getContext().getAuthentication().getName();
+        UserEntity user = userRepository.findByUsernameAndIsLock(username, false)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+
         return chatMessageRepository.findByUserAndCreatedDateBetweenOrderByCreatedDateAsc(user, startDate, endDate);
     }
 
     /**
      * 특정 사용자(userId)의 전체 상담 대화 기록 조회
      */
-    public List<ChatMessage> getFullChatHistory(UserResponse userResponse) {
-        UserEntity user = userRepository.findByEmail(userResponse.email())
-                .orElseThrow(() -> new IllegalArgumentException("유효하지 않은 사용자입니다."));
+    public List<ChatMessage> getFullChatHistory() {
+        // ① 유저 조회 (유효성 검사)
+        String username = SecurityContextHolder.getContext().getAuthentication().getName();
+        UserEntity user = userRepository.findByUsernameAndIsLock(username, false)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+
         return Optional
                 .ofNullable(chatMessageRepository.findByUserOrderByCreatedDateAsc(user))
                 .orElseGet(ArrayList::new); // 빈 리스트 방어
