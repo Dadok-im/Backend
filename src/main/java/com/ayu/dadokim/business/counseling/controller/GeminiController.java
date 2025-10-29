@@ -16,11 +16,9 @@ import java.util.List;
 public class GeminiController {
 
     private final GeminiService geminiService;
-    private final UserService userService;
 
-    public GeminiController(GeminiService geminiService, UserService userService) {
+    public GeminiController(GeminiService geminiService) {
         this.geminiService = geminiService;
-        this.userService = userService;
     }
 
     /**
@@ -38,7 +36,7 @@ public class GeminiController {
      */
     @PostMapping
     public ChatResponseDTO chat(@RequestBody ChatRequestDTO request) throws IOException {
-        return geminiService.getChatResponse(userService.readUser(), request);
+        return geminiService.getChatResponse(request);
     }
 
     /**
@@ -53,7 +51,7 @@ public class GeminiController {
      */
     @GetMapping("/history/all")
     public List<ChatMessage> getFullChatHistory() {
-        return geminiService.getFullChatHistory(userService.readUser());
+        return geminiService.getFullChatHistory();
     }
 
     /**
@@ -73,6 +71,6 @@ public class GeminiController {
             @RequestParam("startDate") LocalDateTime startDate,
             @RequestParam("endDate") LocalDateTime endDate
     ) {
-        return geminiService.getChatHistoryByDateRange(userService.readUser(), startDate, endDate);
+        return geminiService.getChatHistoryByDateRange(startDate, endDate);
     }
 }

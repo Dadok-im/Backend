@@ -11,6 +11,7 @@ import jakarta.transaction.Transactional;
 import okhttp3.*;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -44,11 +45,15 @@ public class ChatService {
      * user별로 대화 기록을 저장합니다.
      */
     @Transactional
-    public String getChatResponse(UserResponse userResponse, ChatRequestDTO request) throws IOException {
+    public String getChatResponse(ChatRequestDTO request) throws IOException {
 
         // ① 유저 조회 (유효성 검사)
-        UserEntity user = userRepository.findByEmail(userResponse.email())
-                .orElseThrow(() -> new IllegalArgumentException("유효하지 않은 사용자입니다."));
+        String username = SecurityContextHolder.getContext().getAuthentication().getName();
+        UserEntity user = userRepository.findByUsernameAndIsLock(username, false)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+
+//        UserEntity user = userRepository.findByEmail(userResponse.email())
+//                .orElseThrow(() -> new IllegalArgumentException("유효하지 않은 사용자입니다."));
 
         // ② 해당 유저의 이전 대화 불러오기 (null-safe)
         List<ChatMessage> history = Optional
@@ -129,9 +134,11 @@ public class ChatService {
     /**
      * user별 특정 기간 대화 조회 (빈 리스트 방어)
      */
-    public List<ChatMessage> getChatHistoryByDateRange(UserResponse userResponse, LocalDateTime startDate, LocalDateTime endDate) {
-        UserEntity user = userRepository.findByEmail(userResponse.email())
-                .orElseThrow(() -> new IllegalArgumentException("유효하지 않은 사용자입니다."));
+    public List<ChatMessage> getChatHistoryByDateRange(LocalDateTime startDate, LocalDateTime endDate) {
+        // ① 유저 조회 (유효성 검사)
+        String username = SecurityContextHolder.getContext().getAuthentication().getName();
+        UserEntity user = userRepository.findByUsernameAndIsLock(username, false)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
         return Optional
                 .ofNullable(chatMessageRepository.findByUserAndCreatedDateBetweenOrderByCreatedDateAsc(user, startDate, endDate))
                 .orElseGet(ArrayList::new);
@@ -140,9 +147,12 @@ public class ChatService {
     /**
      * user별 전체 대화 조회 (빈 리스트 방어)
      */
-    public List<ChatMessage> getFullChatHistory(UserResponse userResponse) {
-        UserEntity user = userRepository.findByEmail(userResponse.email())
-                .orElseThrow(() -> new IllegalArgumentException("유효하지 않은 사용자입니다."));
+    public List<ChatMessage> getFullChatHistory() {
+        // ① 유저 조회 (유효성 검사)
+        String username = SecurityContextHolder.getContext().getAuthentication().getName();
+        UserEntity user = userRepository.findByUsernameAndIsLock(username, false)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+
         return Optional
                 .ofNullable(chatMessageRepository.findByUserOrderByCreatedDateAsc(user))
                 .orElseGet(ArrayList::new);

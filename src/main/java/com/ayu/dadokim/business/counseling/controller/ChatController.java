@@ -28,13 +28,10 @@ import java.util.List;
 public class ChatController {
 
     private final ChatService chatService;
-    private final UserService userService;
 
-    public ChatController(ChatService chatService, UserService userService) {
+    public ChatController(ChatService chatService) {
         this.chatService = chatService;
-        this.userService = userService;
     }
-
     /**
      * 💬 새 상담 메시지 전송 및 AI 응답 반환
      * ----------------------------------
@@ -56,7 +53,7 @@ public class ChatController {
      */
     @PostMapping
     public ChatResponseDTO chat(@RequestBody ChatRequestDTO request) throws IOException {
-        String reply = chatService.getChatResponse(userService.readUser(), request);
+        String reply = chatService.getChatResponse(request);
         return new ChatResponseDTO("assistant", reply);
     }
 
@@ -75,7 +72,7 @@ public class ChatController {
      */
     @GetMapping("/history/all")
     public List<ChatMessage> getFullChatHistory() {
-        return chatService.getFullChatHistory(userService.readUser());
+        return chatService.getFullChatHistory();
     }
 
     /**
@@ -101,6 +98,6 @@ public class ChatController {
             @RequestParam("startDate") LocalDateTime startDate,
             @RequestParam("endDate") LocalDateTime endDate
     ) {
-        return chatService.getChatHistoryByDateRange(userService.readUser(), startDate, endDate);
+        return chatService.getChatHistoryByDateRange(startDate, endDate);
     }
 }
