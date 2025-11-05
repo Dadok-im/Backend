@@ -150,8 +150,7 @@ jobs:
             TARGET="${{ env.TARGET }}"
             NGINX="${{ secrets.NGINX_CONTAINER_NAME || 'nginxserver' }}"
 
-            sudo docker exec -i "$NGINX" bash -lc "echo 'set \$service_url http://${TARGET};' > /etc/nginx/conf.d/service-env.inc && nginx -t && nginx -s reload"
-
+            sudo docker exec -i "$NGINX" bash -lc \"echo 'set \$service_url ${TARGET};' > /etc/nginx/conf.d/service-env.inc && nginx -t && nginx -s reload"
       # 5) 이전 색상 종료
       - name: Stop old stack
         uses: appleboy/ssh-action@v1.2.0
