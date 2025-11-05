@@ -15,8 +15,6 @@ public class HealthCheckController {
     private String env;
     @Value("${server.port}")
     private String serverPort;
-    @Value("${server.address}")
-    private String serverAddress;
     @Value("${serverName}")
     private String serverName;
 
@@ -25,7 +23,6 @@ public class HealthCheckController {
         Map<String,String> responseData = new TreeMap<>();
 
         responseData.put("serverName", serverName);
-        responseData.put("serverAddress", serverAddress);
         responseData.put("serverPort", serverPort);
         responseData.put("env", env);
 
