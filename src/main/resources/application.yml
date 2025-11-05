@@ -1,15 +1,24 @@
-
-server:
-  port: 8080
-
-cors:
-  allowed-origins: "http://localhost:5173"
-
+# =========================================
+# application.yml (최종본)
+# - 기본 프로필: local  (IntelliJ에서 아무 설정 없이 실행 ⇒ local+common)
+# - Docker(dev): SPRING_PROFILES_ACTIVE=dev ⇒ dev+common
+# - blue/green: 배포용 프로필
+# =========================================
 spring:
-  datasource:
-    url: jdbc:mysql://localhost:3306/dadokim
-    username: ${USER_NAME}
-    password: ${USER_PASSWORD}
+  profiles:
+    default: local
+    group:
+      local: local,common
+      dev: dev,common
+      blue: blue,common
+      green: green,common
+
+---
+# =============== 공통 설정 ===============
+spring:
+  config:
+    activate:
+      on-profile: common
 
   jpa:
     show-sql: true
@@ -26,9 +35,8 @@ spring:
         registration:
           naver:
             client-name: naver
-            client-id: ZHohTJRXUuS1EBagjWfi
-            client-secret: RWbPqFkJ2a
-            redirect-uri: http://localhost:8080/login/oauth2/code/naver
+            client-id: ${NAVER_CLIENT_ID}
+            client-secret: ${NAVER_CLIENT_SECRET}
             authorization-grant-type: authorization_code
             scope:
               - name
@@ -45,14 +53,105 @@ jwt:
   access-token-expiration: ${JWT_ACCESS_EXPIRATION}
   refresh-token-expiration: ${JWT_REFRESH_EXPIRATION}
 
-# AI API Keys (최상위 레벨)
 geminiapi:
   key: ${GEMINI_API_KEY}
 
 chatkey: ${GPT_API_KEY}
 
-# 카카오 REST API 키 주입
 kakao:
   rest-api-key: ${KAKAO_API_KEY}
 
+logging:
+  level:
+    root: INFO
+    com.ayu.dadokim: DEBUG
 
+server:
+  port: 8080
+
+---
+# =============== 로컬(local): IntelliJ 실행, 로컬 PC MySQL 사용 ===============
+spring:
+  config:
+    activate:
+      on-profile: local
+  datasource:
+    url: jdbc:mysql://localhost:3306/dadokim
+    username: ${USER_NAME}
+    password: ${USER_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  security:
+    oauth2:
+      client:
+        registration:
+          naver:
+            # 로컬 포트 명시
+            redirect-uri: http://localhost:8080/login/oauth2/code/naver
+
+serverName: local_server
+server:
+  address: localhost
+
+---
+# =============== 개발(dev): Docker 실행, 컨테이너 MySQL(db) 사용 ===============
+spring:
+  config:
+    activate:
+      on-profile: dev
+  datasource:
+    url: jdbc:mysql://db:3306/dadokim
+    username: ${USER_NAME}
+    password: ${USER_PASSWORD}
+    hikari:
+      initializationFailTimeout: 0
+      connectionTimeout: 30000
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  security:
+    oauth2:
+      client:
+        registration:
+          naver:
+            # 호스트에서 8080으로 프록시/포워딩한다면 다음처럼
+            redirect-uri: http://localhost:8080/login/oauth2/code/naver
+            # 또는 더 안전하게 {baseUrl} 사용 가능:
+            # redirect-uri: "{baseUrl}/login/oauth2/code/naver"
+
+serverName: dev_server
+
+---
+# =============== blue (배포) ===============
+spring:
+  config:
+    activate:
+      on-profile: blue
+  security:
+    oauth2:
+      client:
+        registration:
+          naver:
+            redirect-uri: http://16.184.57.174/login/oauth2/code/naver
+
+server:
+  port: 8080
+  address: 16.184.57.174
+
+serverName: blue_server
+
+---
+# =============== green (배포) ===============
+spring:
+  config:
+    activate:
+      on-profile: green
+  security:
+    oauth2:
+      client:
+        registration:
+          naver:
+            redirect-uri: http://16.184.57.174:8080/login/oauth2/code/naver
+
+server:
+  port: 8081
+  address: 16.184.57.174
+
+serverName: green_server
