@@ -1,4 +1,4 @@
-name: CICD
+name: CI-CD (dadokim blue/green)
 
 on:
   push:
@@ -22,7 +22,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 멀티아키 빌드를 위해 buildx 사용
+      # (선택) 리포 루트에 Dockerfile이 없으면 file/context 경로 바꿔주세요
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -35,8 +35,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 멀티아키 빌드: amd64 + arm64 (Graviton 호환)
-      - name: Build & Push
+      - name: Build & Push (linux/amd64 + linux/arm64)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -44,8 +43,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_LATEST_TAG }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
   deploy:
     name: Blue/Green Deploy to EC2
@@ -53,7 +52,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Decide target upstream (blue/green) by reading Nginx file
+      # 1) 현재 Nginx가 가리키는 색상 읽어서 타깃 결정
+      - name: Decide target upstream (blue/green)
         id: decide
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -63,27 +63,27 @@ jobs:
           script: |
             set -euo pipefail
 
-            # 현재 서비스 색상 추출 (없으면 green 가정)
             if sudo test -f /etc/nginx/conf.d/service-env.inc; then
-              CUR=$(sudo cat /etc/nginx/conf.d/service-env.inc | grep -Eo 'http://(blue|green);' | sed 's#http://##;s/;//')
+              CUR=$(sudo grep -Eo 'http://(blue|green);' /etc/nginx/conf.d/service-env.inc | sed 's#http://##;s/;//')
             else
               CUR="green"
             fi
-            if [ -z "$CUR" ]; then CUR="green"; fi
+            [ -z "$CUR" ] && CUR="green"
 
             if [ "$CUR" = "blue" ]; then
-              echo "CURRENT=blue" >> $GITHUB_ENV
-              echo "TARGET=green" >> $GITHUB_ENV
+              echo "CURRENT=blue"  >> $GITHUB_ENV
+              echo "TARGET=green"  >> $GITHUB_ENV
               echo "TARGET_PORT=8081" >> $GITHUB_ENV
               echo "CURRENT_PORT=8080" >> $GITHUB_ENV
             else
               echo "CURRENT=green" >> $GITHUB_ENV
-              echo "TARGET=blue" >> $GITHUB_ENV
+              echo "TARGET=blue"   >> $GITHUB_ENV
               echo "TARGET_PORT=8080" >> $GITHUB_ENV
               echo "CURRENT_PORT=8081" >> $GITHUB_ENV
             fi
 
-      - name: Deploy target stack (docker compose up)
+      # 2) 대상 색상 compose up (이미지 최신으로 교체, 빌드 금지)
+      - name: Deploy target stack
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.LIVE_SERVER_IP }}
@@ -92,29 +92,26 @@ jobs:
           script_stop: true
           script: |
             set -euo pipefail
-
             DOCKERHUB_REPO="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}"
-            TAG_SHA="${{ github.sha }}"
-            TAG_LATEST="${{ env.IMAGE_LATEST_TAG }}"
             TARGET="${{ env.TARGET }}"
+            TAG_LATEST="${{ env.IMAGE_LATEST_TAG }}"
+            SHA_TAG="${{ github.sha }}"
 
             cd /home/ubuntu
 
-            # compose 파일 안의 image 라인이 네임스페이스 없이 'dadokim-app:latest' 라면, 자동 치환
-            if [ -f "docker-compose-${TARGET}.yml" ]; then
-              if grep -qE 'image:\s*dadokim-app:latest' "docker-compose-${TARGET}.yml"; then
-                sudo sed -i "s#image:\s*dadokim-app:latest#image: ${DOCKERHUB_REPO}:${TAG_LATEST}#g" "docker-compose-${TARGET}.yml"
-              fi
+            # compose 파일 안 image 라인이 네임스페이스 없이 있다면 자동 치환 (최초 1회용)
+            if grep -qE 'image:\s*dadokim-app:latest' "docker-compose-${TARGET}.yml"; then
+              sudo sed -i "s#image:\s*dadokim-app:latest#image: ${DOCKERHUB_REPO}:${TAG_LATEST}#g" "docker-compose-${TARGET}.yml"
             fi
 
-            # 최신 이미지 당겨오기 (latest & sha 둘 다)
+            # 최신 이미지 당겨오기 (latest 우선, SHA도 함께)
             sudo docker pull "${DOCKERHUB_REPO}:${TAG_LATEST}" || true
-            sudo docker pull "${DOCKERHUB_REPO}:${TAG_SHA}" || true
+            sudo docker pull "${DOCKERHUB_REPO}:${SHA_TAG}"   || true
 
-            # 필요 시 latest로 고정 (compose 파일이 latest면 그대로 실행)
-            # --no-build 필수: EC2엔 소스/Gradle 없음
+            # env 파일 치환용 + 컨테이너 env 주입용 둘 다 대비해서 --env-file 사용 권장
             sudo docker compose --env-file .env.prod -f "docker-compose-${TARGET}.yml" up -d --no-build
 
+      # 3) 신규 스택 헬스체크 (/healthcheck 사용)
       - name: Health check new stack
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -124,26 +121,23 @@ jobs:
           script_stop: true
           script: |
             set -euo pipefail
-            TARGET_PORT="${{ env.TARGET_PORT }}"
+            TARGET="${{ env.TARGET }}"
+            PORT="${{ env.TARGET_PORT }}"
 
-            # 30회(약 60초) 재시도
+            # 최대 60초(30회) 재시도
             for i in $(seq 1 30); do
-              if curl -fsS "http://127.0.0.1:${TARGET_PORT}/actuator/health" | grep -q '"status":"UP"'; then
-                echo "Health OK on ${TARGET_PORT}"
+              if curl -fsS "http://127.0.0.1:${PORT}/healthcheck" | grep -q "\"env\":\"${TARGET}\""; then
+                echo "Health OK on ${PORT} (env=${TARGET})"
                 exit 0
               fi
               sleep 2
             done
 
-            echo "Health check failed on ${TARGET_PORT}"
-            # 실패 시 최근 200줄 로그
-            if [ "${{ env.TARGET }}" = "blue" ]; then
-              sudo docker logs --tail=200 blue || true
-            else
-              sudo docker logs --tail=200 green || true
-            fi
+            echo "Health check FAILED on ${PORT}"
+            sudo docker logs --tail=200 "${TARGET}" || true
             exit 1
 
+      # 4) Nginx 전환 (변수 파일에 스킴+세미콜론 필수)
       - name: Switch Nginx upstream to target
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -153,13 +147,12 @@ jobs:
           script_stop: true
           script: |
             set -euo pipefail
-
             TARGET="${{ env.TARGET }}"
             NGINX="${{ secrets.NGINX_CONTAINER_NAME || 'nginxserver' }}"
 
-            # Nginx 변수 파일에 스킴 포함/세미콜론 포함으로 기록
-            sudo docker exec -i "$NGINX" bash -lc "echo 'set \$service_url http://${TARGET};' > /etc/nginx/conf.d/service-env.inc && nginx -s reload"
+            sudo docker exec -i "$NGINX" bash -lc "echo 'set \$service_url http://${TARGET};' > /etc/nginx/conf.d/service-env.inc && nginx -t && nginx -s reload"
 
+      # 5) 이전 색상 종료
       - name: Stop old stack
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -170,10 +163,4 @@ jobs:
           script: |
             set -euo pipefail
             CURRENT="${{ env.CURRENT }}"
-
-            # 현재 색 컨테이너 정리 (없으면 무시)
-            if [ "$CURRENT" = "blue" ]; then
-              sudo docker rm -f blue || true
-            else
-              sudo docker rm -f green || true
-            fi
+            sudo docker rm -f "${CURRENT}" || true
