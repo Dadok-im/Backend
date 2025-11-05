@@ -13,6 +13,9 @@ spring:
       blue: blue,common
       green: green,common
 
+server:
+  env: blue
+
 ---
 # =============== 공통 설정 ===============
 spring:
@@ -142,7 +145,6 @@ spring:
 server:
   port: 8080
   address: 16.184.57.174
-  env: blue
 
 serverName: blue_server
 
@@ -162,7 +164,6 @@ spring:
 server:
   port: 8081
   address: 16.184.57.174
-  env: green
 
 serverName: green_server
 
