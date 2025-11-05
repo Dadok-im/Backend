@@ -150,6 +150,9 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.PUT, "/api/user/put").hasRole(UserRoleType.USER.name())
                         .requestMatchers(HttpMethod.DELETE, "/api/user/delete").hasRole(UserRoleType.USER.name())
 
+                        .requestMatchers(HttpMethod.GET, "/healthcheck").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/env").permitAll()
+
                         .anyRequest().authenticated()
                 );
 

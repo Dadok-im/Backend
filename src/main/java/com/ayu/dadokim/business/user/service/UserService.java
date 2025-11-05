@@ -125,10 +125,10 @@ public class UserService extends DefaultOAuth2UserService implements UserDetails
         Map<String, Object> attributes;
         List<GrantedAuthority> authorities;
 
-        String username;
+        String username; // registration_id
         String role = UserRoleType.USER.name();
-        String email;
-        String nickname;
+        String email; // naver mail address
+        String nickname; // user name
 
         /**
          * error 해결 : nickname 값을 mock 값으로 넣으니 해결 !

@@ -1,5 +1,4 @@
 services:
-
   db:
     image: mysql:8.0
     container_name: dadokim-db-dev
@@ -21,16 +20,18 @@ services:
       dockerfile: Dockerfile
     container_name: springboot-dadokim-dev
     env_file:
-      - .env
+      - .env        # 키=값 포맷 준수(공백 X)
     depends_on:
       - db
     ports:
       - "8080:8080"
     volumes:
       - .:/workspace
+      # Gradle 캐시가 필요 없다면 아래 라인은 제거 가능
       - ~/.gradle:/home/gradle/.gradle
     environment:
       - SPRING_PROFILES_ACTIVE=dev
+      # 아래 두 줄은 application.yml에서 ${USER_NAME}/${USER_PASSWORD}를 쓰므로 없어도 OK
       - SPRING_DATASOURCE_USERNAME=${USER_NAME}
       - SPRING_DATASOURCE_PASSWORD=${USER_PASSWORD}
 
