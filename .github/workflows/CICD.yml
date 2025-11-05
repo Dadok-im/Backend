@@ -1,0 +1,179 @@
+name: CICD
+
+on:
+  push:
+    branches: [ "dev" ]
+  pull_request:
+    branches: [ "dev" ]
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: dadokim-app
+  IMAGE_LATEST_TAG: latest
+
+jobs:
+  build_and_push:
+    name: Build & Push Docker (multi-arch)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 멀티아키 빌드를 위해 buildx 사용
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: DockerHub Login
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 멀티아키 빌드: amd64 + arm64 (Graviton 호환)
+      - name: Build & Push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_LATEST_TAG }}
+
+  deploy:
+    name: Blue/Green Deploy to EC2
+    needs: build_and_push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Decide target upstream (blue/green) by reading Nginx file
+        id: decide
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.LIVE_SERVER_IP }}
+          username: ${{ secrets.EC2_USER || 'ubuntu' }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -euo pipefail
+
+            # 현재 서비스 색상 추출 (없으면 green 가정)
+            if sudo test -f /etc/nginx/conf.d/service-env.inc; then
+              CUR=$(sudo cat /etc/nginx/conf.d/service-env.inc | grep -Eo 'http://(blue|green);' | sed 's#http://##;s/;//')
+            else
+              CUR="green"
+            fi
+            if [ -z "$CUR" ]; then CUR="green"; fi
+
+            if [ "$CUR" = "blue" ]; then
+              echo "CURRENT=blue" >> $GITHUB_ENV
+              echo "TARGET=green" >> $GITHUB_ENV
+              echo "TARGET_PORT=8081" >> $GITHUB_ENV
+              echo "CURRENT_PORT=8080" >> $GITHUB_ENV
+            else
+              echo "CURRENT=green" >> $GITHUB_ENV
+              echo "TARGET=blue" >> $GITHUB_ENV
+              echo "TARGET_PORT=8080" >> $GITHUB_ENV
+              echo "CURRENT_PORT=8081" >> $GITHUB_ENV
+            fi
+
+      - name: Deploy target stack (docker compose up)
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.LIVE_SERVER_IP }}
+          username: ${{ secrets.EC2_USER || 'ubuntu' }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+
+            DOCKERHUB_REPO="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}"
+            TAG_SHA="${{ github.sha }}"
+            TAG_LATEST="${{ env.IMAGE_LATEST_TAG }}"
+            TARGET="${{ env.TARGET }}"
+
+            cd /home/ubuntu
+
+            # compose 파일 안의 image 라인이 네임스페이스 없이 'dadokim-app:latest' 라면, 자동 치환
+            if [ -f "docker-compose-${TARGET}.yml" ]; then
+              if grep -qE 'image:\s*dadokim-app:latest' "docker-compose-${TARGET}.yml"; then
+                sudo sed -i "s#image:\s*dadokim-app:latest#image: ${DOCKERHUB_REPO}:${TAG_LATEST}#g" "docker-compose-${TARGET}.yml"
+              fi
+            fi
+
+            # 최신 이미지 당겨오기 (latest & sha 둘 다)
+            sudo docker pull "${DOCKERHUB_REPO}:${TAG_LATEST}" || true
+            sudo docker pull "${DOCKERHUB_REPO}:${TAG_SHA}" || true
+
+            # 필요 시 latest로 고정 (compose 파일이 latest면 그대로 실행)
+            # --no-build 필수: EC2엔 소스/Gradle 없음
+            sudo docker compose --env-file .env.prod -f "docker-compose-${TARGET}.yml" up -d --no-build
+
+      - name: Health check new stack
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.LIVE_SERVER_IP }}
+          username: ${{ secrets.EC2_USER || 'ubuntu' }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            TARGET_PORT="${{ env.TARGET_PORT }}"
+
+            # 30회(약 60초) 재시도
+            for i in $(seq 1 30); do
+              if curl -fsS "http://127.0.0.1:${TARGET_PORT}/actuator/health" | grep -q '"status":"UP"'; then
+                echo "Health OK on ${TARGET_PORT}"
+                exit 0
+              fi
+              sleep 2
+            done
+
+            echo "Health check failed on ${TARGET_PORT}"
+            # 실패 시 최근 200줄 로그
+            if [ "${{ env.TARGET }}" = "blue" ]; then
+              sudo docker logs --tail=200 blue || true
+            else
+              sudo docker logs --tail=200 green || true
+            fi
+            exit 1
+
+      - name: Switch Nginx upstream to target
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.LIVE_SERVER_IP }}
+          username: ${{ secrets.EC2_USER || 'ubuntu' }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+
+            TARGET="${{ env.TARGET }}"
+            NGINX="${{ secrets.NGINX_CONTAINER_NAME || 'nginxserver' }}"
+
+            # Nginx 변수 파일에 스킴 포함/세미콜론 포함으로 기록
+            sudo docker exec -i "$NGINX" bash -lc "echo 'set \$service_url http://${TARGET};' > /etc/nginx/conf.d/service-env.inc && nginx -s reload"
+
+      - name: Stop old stack
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.LIVE_SERVER_IP }}
+          username: ${{ secrets.EC2_USER || 'ubuntu' }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            CURRENT="${{ env.CURRENT }}"
+
+            # 현재 색 컨테이너 정리 (없으면 무시)
+            if [ "$CURRENT" = "blue" ]; then
+              sudo docker rm -f blue || true
+            else
+              sudo docker rm -f green || true
+            fi
