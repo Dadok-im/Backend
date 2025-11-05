@@ -15,21 +15,13 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      # Dockerfile이 Gradle/JDK17로 빌드하므로 JDK 17만 설치 (로컬 빌드 X)
-      - name: Install JDK 17
-        uses: actions/setup-java@v3
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-
       - name: Login to DockerHub
         uses: docker/login-action@v1
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 서버 compose가 'image: leeminjundocker/dadokim-app:latest'를 사용하므로
-      # 레지스트리에 동일 태그로 푸시
+      # Dockerfile이 gradle 빌드를 포함하므로 단순 build/push
       - name: Build Docker
         run: docker build --platform linux/amd64 -t ${{ secrets.DOCKERHUB_USERNAME }}/dadokim-app:latest .
 
@@ -40,86 +32,132 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      # 1) 현재 Nginx가 바라보는 upstream 파악 → 대상/포트 계산 (Runner에서만 GITHUB_ENV 사용)
-      - name: Set target IP
+      # (A) 퍼블릭 /env를 짧게 시도 (타임아웃/재시도)
+      - name: Detect current upstream via public /env (fast)
+        id: detect_public
         shell: bash
         run: |
           set -euo pipefail
-          STATUS=$(curl -o /dev/null -w "%{http_code}" "http://${{ secrets.LIVE_SERVER_IP }}/env" || true)
-          if [ "${STATUS}" = "200" ]; then
-            CURRENT_UPSTREAM=$(curl -s "http://${{ secrets.LIVE_SERVER_IP }}/env")
+          STATUS=$(curl -o /dev/null -w "%{http_code}" \
+            --connect-timeout 2 --max-time 3 \
+            --retry 3 --retry-connrefused --retry-delay 1 \
+            "http://${{ secrets.LIVE_SERVER_IP }}/env" || true)
+          if [ "$STATUS" = "200" ]; then
+            CUR=$(curl -s --connect-timeout 2 --max-time 3 "http://${{ secrets.LIVE_SERVER_IP }}/env" | tr -d '\r\n ')
+            echo "current=${CUR}" >> "$GITHUB_OUTPUT"
+            echo "Public /env OK: $CUR"
           else
-            # 최초 배포 등 /env 미응답 시 green으로 가정
-            CURRENT_UPSTREAM=green
+            echo "current=" >> "$GITHUB_OUTPUT"
+            echo "Public /env failed with status=${STATUS:-none}"
           fi
 
-          echo "CURRENT_UPSTREAM=${CURRENT_UPSTREAM}" >> "$GITHUB_ENV"
+      # (B) 실패 시 폴백: 서버 Nginx 설정에서 현재 색상 조회
+      - name: Detect current upstream via SSH fallback
+        id: detect_ssh
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.LIVE_SERVER_IP }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          capture_stdout: true
+          script: |
+            set -euo pipefail
+            NGINX=nginxserver
+            sudo docker exec -i "$NGINX" sh -lc \
+              "awk -F'[ ;]+' '/set \\$service_url/ {print \$4}' /etc/nginx/conf.d/service-env.inc" \
+            | tr -d '\r\n '
 
-          if [ "$CURRENT_UPSTREAM" = "blue" ]; then
+      # (C) 최종 CURRENT/TARGET/PORT 계산 (runner env에 기록)
+      - name: Decide CURRENT/TARGET
+        shell: bash
+        run: |
+          set -euo pipefail
+          CUR="${{ steps.detect_public.outputs.current }}"
+          if [ -z "$CUR" ]; then
+            CUR="${{ steps.detect_ssh.outputs.stdout }}"
+          fi
+          if [ -z "$CUR" ]; then
+            CUR="green"  # 최초 배포 가정
+          fi
+          echo "CURRENT_UPSTREAM=$CUR" >> "$GITHUB_ENV"
+
+          if [ "$CUR" = "blue" ]; then
             echo "CURRENT_PORT=8080"    >> "$GITHUB_ENV"
             echo "STOPPED_PORT=8081"   >> "$GITHUB_ENV"
             echo "TARGET_UPSTREAM=green" >> "$GITHUB_ENV"
             echo "TARGET_PORT=8081"    >> "$GITHUB_ENV"
-          elif [ "$CURRENT_UPSTREAM" = "green" ]; then
+          else
             echo "CURRENT_PORT=8081"   >> "$GITHUB_ENV"
             echo "STOPPED_PORT=8080"   >> "$GITHUB_ENV"
             echo "TARGET_UPSTREAM=blue"  >> "$GITHUB_ENV"
             echo "TARGET_PORT=8080"    >> "$GITHUB_ENV"
-          else
-            echo "Unknown CURRENT_UPSTREAM: ${CURRENT_UPSTREAM}"
-            exit 1
           fi
 
-      # 2) 대상 스택 기동 (서버에서 빌드하지 않도록 --no-build 사용, 항상 sudo)
-      - name: Docker compose
+      # (D) 대상 스택 기동 (레지스트리 pull → --no-build)
+      - name: Docker compose (target up)
         uses: appleboy/ssh-action@master
         with:
-          username: ubuntu
           host: ${{ secrets.LIVE_SERVER_IP }}
+          username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
-          script_stop: true
           script: |
             set -euo pipefail
-            # 최신 이미지 pull (레지스트리 기반 배포)
             sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/dadokim-app:latest || true
-            # 대상 compose up (서버에 /home/ubuntu/docker-compose-*.yml 존재)
-            # compose에 build: 항목이 있어도 서버 빌드를 막기 위해 --no-build 사용
+            FILE="/home/ubuntu/docker-compose-${{ env.TARGET_UPSTREAM }}.yml"
             if [ -f /home/ubuntu/.env.prod ]; then
-              sudo docker-compose --env-file /home/ubuntu/.env.prod -f /home/ubuntu/docker-compose-${{ env.TARGET_UPSTREAM }}.yml up -d --no-build
+              sudo docker-compose --env-file /home/ubuntu/.env.prod -f "$FILE" up -d --no-build
             else
-              sudo docker-compose -f /home/ubuntu/docker-compose-${{ env.TARGET_UPSTREAM }}.yml up -d --no-build
+              sudo docker-compose -f "$FILE" up -d --no-build
             fi
 
-      # 3) 신규 스택 헬스체크: Nginx를 거치지 않고 대상 포트(STOPPED_PORT)의 /env 확인
+      # (E) 대상 컨테이너 healthy 대기 (최대 240초)
+      - name: Wait until target container is healthy
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.LIVE_SERVER_IP }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            TARGET="${{ env.TARGET_UPSTREAM }}"
+            echo "Waiting for $TARGET to be healthy..."
+            for i in $(seq 1 120); do
+              STATUS="$(sudo docker inspect -f '{{.State.Health.Status}}' "$TARGET" 2>/dev/null || echo 'unknown')"
+              [ "$STATUS" = "healthy" ] && { echo "$TARGET is healthy."; exit 0; }
+              sleep 2
+            done
+            echo "ERROR: $TARGET not healthy in time"
+            sudo docker ps
+            sudo docker logs --tail=200 "$TARGET" || true
+            exit 1
+
+      # (F) 대상 포트로 /env 확인 (퍼블릭, 재시도 충분히)
       - name: Check deploy server URL
         uses: jtalk/url-health-check-action@v3
         with:
           url: http://${{ secrets.LIVE_SERVER_IP }}:${{ env.STOPPED_PORT }}/env
-          max-attempts: 6
+          max-attempts: 12
           retry-delay: 10s
 
-      # 4) Nginx 전환: service-env.inc에는 upstream "이름만" (blue/green) 작성
-      #    $service_url 변수 확장 충돌 방지를 위해 quoted heredoc 사용
+      # (G) Nginx 전환 (upstream 이름만 쓰는 quoted heredoc)
       - name: Change nginx upstream
         uses: appleboy/ssh-action@master
         with:
-          username: ubuntu
           host: ${{ secrets.LIVE_SERVER_IP }}
+          username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
-          script_stop: true
           script: |
             set -euo pipefail
             NGINX=nginxserver
-            sudo docker exec -i "$NGINX" sh -lc "printf '%s\n' 'set \$service_url ${{ env.TARGET_UPSTREAM }};' > /etc/nginx/conf.d/service-env.inc && nginx -t && nginx -s reload"
+            sudo docker exec -i "$NGINX" sh -lc "printf '%s\n' 'set \$service_url ${{ env.TARGET_UPSTREAM }};' > /etc/nginx/conf.d/service-env.inc && nginx -t && nginx -s reload"  
 
-      # 5) 이전 컨테이너 종료 (컨테이너 이름이 blue/green)
+      # (H) 이전 컨테이너 종료
       - name: Stop current server
         uses: appleboy/ssh-action@master
         with:
-          username: ubuntu
           host: ${{ secrets.LIVE_SERVER_IP }}
+          username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
-          script_stop: true
           script: |
             set -euo pipefail
             sudo docker stop ${{ env.CURRENT_UPSTREAM }} || true
