@@ -13,6 +13,9 @@ spring:
       blue: blue,common
       green: green,common
 
+server:
+  env: blue
+
 ---
 # =============== 공통 설정 ===============
 spring:
@@ -75,6 +78,9 @@ spring:
   config:
     activate:
       on-profile: local
+
+
+
   datasource:
     url: jdbc:mysql://localhost:3306/dadokim
     username: ${USER_NAME}
@@ -88,9 +94,11 @@ spring:
             # 로컬 포트 명시
             redirect-uri: http://localhost:8080/login/oauth2/code/naver
 
-serverName: local_server
 server:
+  port: 8080
   address: localhost
+
+serverName: local_server
 
 ---
 # =============== 개발(dev): Docker 실행, 컨테이너 MySQL(db) 사용 ===============
@@ -115,6 +123,10 @@ spring:
             redirect-uri: http://localhost:8080/login/oauth2/code/naver
             # 또는 더 안전하게 {baseUrl} 사용 가능:
             # redirect-uri: "{baseUrl}/login/oauth2/code/naver"
+
+server:
+  port: 8080
+  address: localhost
 
 serverName: dev_server
 
