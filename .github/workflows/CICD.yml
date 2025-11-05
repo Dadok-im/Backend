@@ -22,7 +22,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # (선택) 리포 루트에 Dockerfile이 없으면 file/context 경로 바꿔주세요
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -52,114 +51,81 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1) 현재 Nginx가 가리키는 색상 읽어서 타깃 결정
-      - name: Decide target upstream (blue/green)
-        id: decide
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.LIVE_SERVER_IP }}
-          username: ${{ secrets.EC2_USER || 'ubuntu' }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            set -euo pipefail
-
-            if sudo test -f /etc/nginx/conf.d/service-env.inc; then
-              CUR=$(sudo grep -Eo 'http://(blue|green);' /etc/nginx/conf.d/service-env.inc | sed 's#http://##;s/;//')
-            else
-              CUR="green"
-            fi
-            [ -z "$CUR" ] && CUR="green"
-
-            if [ "$CUR" = "blue" ]; then
-              echo "CURRENT=blue"  >> $GITHUB_ENV
-              echo "TARGET=green"  >> $GITHUB_ENV
-              echo "TARGET_PORT=8081" >> $GITHUB_ENV
-              echo "CURRENT_PORT=8080" >> $GITHUB_ENV
-            else
-              echo "CURRENT=green" >> $GITHUB_ENV
-              echo "TARGET=blue"   >> $GITHUB_ENV
-              echo "TARGET_PORT=8080" >> $GITHUB_ENV
-              echo "CURRENT_PORT=8081" >> $GITHUB_ENV
-            fi
-
-      # 2) 대상 색상 compose up (이미지 최신으로 교체, 빌드 금지)
-      - name: Deploy target stack
+      - name: Blue/Green deploy + switch on EC2 (single SSH step)
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.LIVE_SERVER_IP }}
           username: ${{ secrets.EC2_USER || 'ubuntu' }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script_stop: true
+          envs: IMAGE_NAME,IMAGE_LATEST_TAG
           script: |
             set -euo pipefail
-            DOCKERHUB_REPO="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}"
-            TARGET="${{ env.TARGET }}"
-            TAG_LATEST="${{ env.IMAGE_LATEST_TAG }}"
+
+            DOCKERHUB_USER="${{ secrets.DOCKERHUB_USERNAME }}"
+            REPO="${DOCKERHUB_USER}/${IMAGE_NAME}"
+            TAG_LATEST="${IMAGE_LATEST_TAG}"
             SHA_TAG="${{ github.sha }}"
+            NGINX="${{ secrets.NGINX_CONTAINER_NAME || 'nginxserver' }}"
+
+            # 0) 공용 네트워크 준비
+            docker network inspect app_net >/dev/null 2>&1 || docker network create app_net
+
+            # 1) 현재 Nginx 업스트림(blue/green) 파악
+            #    Nginx 컨테이너 안의 service-env.inc에서 $service_url 값을 읽어 컨테이너명 추출
+            CURRENT=$(
+              docker exec -i "$NGINX" sh -lc \
+                "awk -F'[ :;]+' '/set \\$service_url/ {print \$4}' /etc/nginx/conf.d/service-env.inc | sed 's/:.*//'" \
+              | tr -d '\r'
+            )
+            if [ "${CURRENT:-unknown}" = "blue" ]; then
+              TARGET="green"; PREV="blue"
+            else
+              TARGET="blue";  PREV="green"
+            fi
+            echo "Current=${CURRENT:-none} -> Target=${TARGET} (Prev=${PREV})"
 
             cd /home/ubuntu
 
-            # compose 파일 안 image 라인이 네임스페이스 없이 있다면 자동 치환 (최초 1회용)
+            # 2) compose 파일의 image 네임스페이스 보정(최초 1회용)
             if grep -qE 'image:\s*dadokim-app:latest' "docker-compose-${TARGET}.yml"; then
-              sudo sed -i "s#image:\s*dadokim-app:latest#image: ${DOCKERHUB_REPO}:${TAG_LATEST}#g" "docker-compose-${TARGET}.yml"
+              sudo sed -i "s#image:\s*dadokim-app:latest#image: ${REPO}:${TAG_LATEST}#g" "docker-compose-${TARGET}.yml"
             fi
 
-            # 최신 이미지 당겨오기 (latest 우선, SHA도 함께)
-            sudo docker pull "${DOCKERHUB_REPO}:${TAG_LATEST}" || true
-            sudo docker pull "${DOCKERHUB_REPO}:${SHA_TAG}"   || true
+            # 3) 최신 이미지 pull (latest & sha)
+            docker pull "${REPO}:${TAG_LATEST}" || true
+            docker pull "${REPO}:${SHA_TAG}"   || true
 
-            # env 파일 치환용 + 컨테이너 env 주입용 둘 다 대비해서 --env-file 사용 권장
-            sudo docker compose --env-file .env.prod -f "docker-compose-${TARGET}.yml" up -d --no-build
+            # 4) 대상 스택 기동 (환경변수 주입)
+            docker compose --env-file .env.prod -f "docker-compose-${TARGET}.yml" up -d --no-build
 
-      # 3) 신규 스택 헬스체크 (/healthcheck 사용)
-      - name: Health check new stack
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.LIVE_SERVER_IP }}
-          username: ${{ secrets.EC2_USER || 'ubuntu' }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script_stop: true
-          script: |
-            set -euo pipefail
-            TARGET="${{ env.TARGET }}"
-            PORT="${{ env.TARGET_PORT }}"
-
-            # 최대 60초(30회) 재시도
-            for i in $(seq 1 30); do
-              if curl -fsS "http://127.0.0.1:${PORT}/healthcheck" | grep -q "\"env\":\"${TARGET}\""; then
-                echo "Health OK on ${PORT} (env=${TARGET})"
-                exit 0
+            # 5) 컨테이너 헬스체크(Healthcheck 상태 대기)
+            echo "Waiting container health: ${TARGET}"
+            for i in $(seq 1 120); do
+              STATUS="$(docker inspect -f '{{.State.Health.Status}}' ${TARGET} 2>/dev/null || echo 'unknown')"
+              if [ "$STATUS" = "healthy" ]; then
+                echo "Container is healthy."
+                break
               fi
               sleep 2
             done
 
-            echo "Health check FAILED on ${PORT}"
-            sudo docker logs --tail=200 "${TARGET}" || true
-            exit 1
+            # 6) 애플리케이션 레벨 헬스체크 (/actuator/health, 컨테이너 내부에서 직접)
+            docker exec -i "${TARGET}" sh -lc "apk add --no-cache curl >/dev/null 2>&1 || true"
+            for i in $(seq 1 30); do
+              if docker exec -i "${TARGET}" sh -lc "curl -fsS http://localhost:8080/actuator/health | grep -q '\"status\":\"UP\"'"; then
+                echo "App health=UP"
+                break
+              fi
+              sleep 2
+            done
 
-      # 4) Nginx 전환 (변수 파일에 스킴+세미콜론 필수)
-      - name: Switch Nginx upstream to target
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.LIVE_SERVER_IP }}
-          username: ${{ secrets.EC2_USER || 'ubuntu' }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script_stop: true
-          script: |
-            set -euo pipefail
-            TARGET="${{ env.TARGET }}"
-            NGINX="${{ secrets.NGINX_CONTAINER_NAME || 'nginxserver' }}"
+            # 7) Nginx 업스트림 전환(+reload) - 반드시 포트 포함
+            docker exec -i "$NGINX" sh -lc "echo 'set \$service_url http://${TARGET}:8080;' > /etc/nginx/conf.d/service-env.inc && nginx -t && nginx -s reload"
+            echo "Switched Nginx to ${TARGET}"
 
-            sudo docker exec -i "$NGINX" bash -lc \"echo 'set \$service_url ${TARGET};' > /etc/nginx/conf.d/service-env.inc && nginx -t && nginx -s reload"
-      # 5) 이전 색상 종료
-      - name: Stop old stack
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.LIVE_SERVER_IP }}
-          username: ${{ secrets.EC2_USER || 'ubuntu' }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script_stop: true
-          script: |
-            set -euo pipefail
-            CURRENT="${{ env.CURRENT }}"
-            sudo docker rm -f "${CURRENT}" || true
+            # 8) 이전 스택 종료(선택)
+            docker compose -f "docker-compose-${PREV}.yml" down || true
+
+            # 9) 상태 출력
+            docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
