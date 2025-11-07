@@ -103,18 +103,37 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             set -euo pipefail
+
+            # 1) compose 커맨드 자동 선택 (v2 우선)
+            if docker compose version >/dev/null 2>&1; then
+              COMPOSE_CMD="docker compose"
+            else
+              COMPOSE_CMD="docker-compose"
+            fi
+
+            # 2) 타임아웃 넉넉히 (클라이언트/compose 모두)
+            export DOCKER_CLIENT_TIMEOUT=300
+            export COMPOSE_HTTP_TIMEOUT=300
+
             TGT="${{ env.TARGET_UPSTREAM }}"
             IMG="${{ env.IMAGE_NAME }}"
-            # 최신 이미지 pull
+
+            # 3) 최신 이미지 pull
             sudo docker pull "${IMG}:latest" || true
-            # 대상 compose 기동 (--no-build)
+
+            # 4) compose up (sudo에 환경변수 전달: -E 또는 env 앞에 붙이기)
             if [ -f /home/ubuntu/.env.prod ]; then
-              sudo docker-compose --env-file /home/ubuntu/.env.prod -f "/home/ubuntu/docker-compose-${TGT}.yml" up -d --no-build
+              # sudo에 환경변수를 보존(-E) + 명시적 env 보강
+              sudo -E env DOCKER_CLIENT_TIMEOUT="$DOCKER_CLIENT_TIMEOUT" COMPOSE_HTTP_TIMEOUT="$COMPOSE_HTTP_TIMEOUT" \
+                $COMPOSE_CMD --env-file /home/ubuntu/.env.prod -f "/home/ubuntu/docker-compose-${TGT}.yml" up -d --no-build
             else
-              sudo docker-compose -f "/home/ubuntu/docker-compose-${TGT}.yml" up -d --no-build
+              sudo -E env DOCKER_CLIENT_TIMEOUT="$DOCKER_CLIENT_TIMEOUT" COMPOSE_HTTP_TIMEOUT="$COMPOSE_HTTP_TIMEOUT" \
+                $COMPOSE_CMD -f "/home/ubuntu/docker-compose-${TGT}.yml" up -d --no-build
             fi
-            # 가동 상태 표시
+
+            # 5) 상태 출력
             sudo docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+      
 
       # 2) 신규 스택 "서버 내부 localhost"로 헬스체크 (최대 2분)
       - name: Local healthcheck on target
