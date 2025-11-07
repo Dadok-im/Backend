@@ -135,7 +135,7 @@ jobs:
             sudo docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
       
 
-      # 2) 신규 스택 "서버 내부 localhost"로 헬스체크 (최대 2분)
+      # 2) 신규 스택 "서버 내부 localhost"로 헬스체크
       - name: Local healthcheck on target
         id: local_hc
         uses: appleboy/ssh-action@v1.2.0
@@ -143,11 +143,12 @@ jobs:
           host: ${{ secrets.LIVE_SERVER_IP }}
           username: ${{ secrets.EC2_USER || 'ubuntu' }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 15m
           script: |
             set -euo pipefail
             PORT="${{ env.TARGET_PORT }}"
-            PATHS=("/actuator/health" "/health" "/")
-            for i in {1..24}; do
+            PATHS=("/healthcheck" "/actuator/health" "/env" "/")
+            for i in {1..60}; do  # 최대 5분
               for p in "${PATHS[@]}"; do
                 if curl -fsS "http://127.0.0.1:${PORT}${p}" >/dev/null 2>&1; then
                   echo "Healthy on ${PORT}${p}"
@@ -157,13 +158,15 @@ jobs:
               sleep 5
             done
             echo "Healthcheck failed on :${PORT}" >&2
+            echo "==== listeners (host) ====" >&2
+            sudo ss -ltnp | grep ":${PORT}\b" || true
             echo "==== docker ps ====" >&2
-            docker ps >&2 || true
-            echo "==== logs (tail) of target ====" >&2
-            docker logs --tail=300 "${{ env.TARGET_UPSTREAM }}" >&2 || true
+            sudo docker ps >&2 || true
+            echo "==== target logs (tail) ====" >&2
+            sudo docker logs --tail=300 "${{ env.TARGET_UPSTREAM }}" >&2 || true
             exit 1
 
-      # 2-1) 실패 시 새 컨테이너 정리 (CPU 튐 방지)
+        # 2-1) 실패 시 새 컨테이너 정리 (CPU 튐 방지)
       - name: Cleanup target on failure
         if: failure()
         uses: appleboy/ssh-action@v1.2.0

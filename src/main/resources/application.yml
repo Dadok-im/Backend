@@ -144,7 +144,7 @@ spring:
 
 server:
   port: 8080
-  address: 16.184.57.174
+  address: 0.0.0.0
 
 serverName: blue_server
 
@@ -163,7 +163,7 @@ spring:
 
 server:
   port: 8081
-  address: 16.184.57.174
+  address: 0.0.0.0
 
 serverName: green_server
 
