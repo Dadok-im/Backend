@@ -54,22 +54,19 @@ jobs:
     timeout-minutes: 30
     steps:
       # 0) 현재 Nginx가 바라보는 upstream을 서버에서 직접 확인 (service-env.inc 파싱)
-      - name: Read current upstream from Nginx
-        id: get_upstream
+      - name: Read current upstream from Nginx (SSH)
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.LIVE_SERVER_IP }}
           username: ${{ secrets.EC2_USER || 'ubuntu' }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          capture_stdout: true
           script: |
-            set -euo pipefail
+            set -eu
             NGINX="${{ secrets.NGINX_CONTAINER_NAME || 'nginxserver' }}"
-            if ! docker ps --format '{{.Names}}' | grep -q "^${NGINX}$"; then
-              echo "unknown"
-              exit 0
-            fi
-            docker exec "${NGINX}" sh -lc "awk '/set \\\$service_url/ {print \$3}' /etc/nginx/conf.d/service-env.inc | sed -e 's#http://##' -e 's/;//'"
+            sudo docker ps --format '{{.Names}}' | grep -qx "$NGINX" || { echo "NGINX not found"; exit 1; }
+            CUR=$(sudo docker exec "$NGINX" sh -lc "awk '/set \\\$service_url/ {print \$3}' /etc/nginx/conf.d/service-env.inc" \
+                  | sed -e 's#http://##' -e 's/;//') || { echo "read upstream failed"; exit 1; }
+            echo "CUR=$CUR"
 
       - name: Decide target/ports
         id: setenv
