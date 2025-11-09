@@ -55,6 +55,7 @@ jobs:
     steps:
       # 0) 현재 Nginx가 바라보는 upstream을 서버에서 직접 확인 (service-env.inc 파싱)
       - name: Read current upstream from Nginx (SSH)
+        id: get_upstream
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.LIVE_SERVER_IP }}
@@ -91,77 +92,84 @@ jobs:
           # 호환성: 기존 변수명도 세팅
           echo "STOPPED_PORT=${TARGET_PORT:-8081}" >> "$GITHUB_ENV"
 
-      # 1) 대상 스택 이미지 pull + compose up (서버 빌드 금지)
       - name: Start target stack
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.LIVE_SERVER_IP }}
           username: ${{ secrets.EC2_USER || 'ubuntu' }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 25m        # ← 중요: SSH 명령 타임아웃 상향
+          script_stop: true           # ← 첫 실패에서 즉시 중단
           script: |
             set -euo pipefail
-
-            # 1) compose 커맨드 자동 선택 (v2 우선)
+      
+            # compose 커맨드 선택
             if docker compose version >/dev/null 2>&1; then
               COMPOSE_CMD="docker compose"
             else
               COMPOSE_CMD="docker-compose"
             fi
-
-            # 2) 타임아웃 넉넉히 (클라이언트/compose 모두)
+      
             export DOCKER_CLIENT_TIMEOUT=300
             export COMPOSE_HTTP_TIMEOUT=300
-
-            TGT="${{ env.TARGET_UPSTREAM }}"
+      
+            TGT="${{ env.TARGET_UPSTREAM }}"     # blue 또는 green
             IMG="${{ env.IMAGE_NAME }}"
-
-            # 3) 최신 이미지 pull
+      
+            # 0) 대상 이미지 미리 pull
             sudo docker pull "${IMG}:latest" || true
-
-            # 4) compose up (sudo에 환경변수 전달: -E 또는 env 앞에 붙이기)
+      
+            # 1) (핵심) 대상 컨테이너가 있다면 먼저 "깨끗하게" 제거
+            #    재생성에서 멈추는 케이스를 피함
+            if sudo docker ps -a --format '{{.Names}}' | grep -qx "${TGT}"; then
+              sudo docker stop -t 10 "${TGT}" || sudo docker kill "${TGT}" || true
+              sudo docker rm -f "${TGT}" || true
+            fi
+      
+            # 2) orphan 정리와 함께 기동
             if [ -f /home/ubuntu/.env.prod ]; then
-              # sudo에 환경변수를 보존(-E) + 명시적 env 보강
               sudo -E env DOCKER_CLIENT_TIMEOUT="$DOCKER_CLIENT_TIMEOUT" COMPOSE_HTTP_TIMEOUT="$COMPOSE_HTTP_TIMEOUT" \
-                $COMPOSE_CMD --env-file /home/ubuntu/.env.prod -f "/home/ubuntu/docker-compose-${TGT}.yml" up -d --no-build
+                $COMPOSE_CMD --env-file /home/ubuntu/.env.prod -f "/home/ubuntu/docker-compose-${TGT}.yml" \
+                up -d --no-build --remove-orphans
             else
               sudo -E env DOCKER_CLIENT_TIMEOUT="$DOCKER_CLIENT_TIMEOUT" COMPOSE_HTTP_TIMEOUT="$COMPOSE_HTTP_TIMEOUT" \
-                $COMPOSE_CMD -f "/home/ubuntu/docker-compose-${TGT}.yml" up -d --no-build
+                $COMPOSE_CMD -f "/home/ubuntu/docker-compose-${TGT}.yml" \
+                up -d --no-build --remove-orphans
             fi
-
-            # 5) 상태 출력
+      
+            # 3) 상태 출력
             sudo docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
       
-
-      # 2) 신규 스택 "서버 내부 localhost"로 헬스체크
-      - name: Local healthcheck on target
-        id: local_hc
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.LIVE_SERVER_IP }}
-          username: ${{ secrets.EC2_USER || 'ubuntu' }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          command_timeout: 15m
-          script: |
-            set -euo pipefail
-            PORT="${{ env.TARGET_PORT }}"
-            PATHS=("/healthcheck" "/actuator/health" "/env" "/")
-            for i in {1..60}; do  # 최대 5분
-              for p in "${PATHS[@]}"; do
-                if curl -fsS "http://127.0.0.1:${PORT}${p}" >/dev/null 2>&1; then
-                  echo "Healthy on ${PORT}${p}"
-                  exit 0
-                fi
-              done
-              sleep 5
-            done
-            echo "Healthcheck failed on :${PORT}" >&2
-            echo "==== listeners (host) ====" >&2
-            sudo ss -ltnp | grep ":${PORT}\b" || true
-            echo "==== docker ps ====" >&2
-            sudo docker ps >&2 || true
-            echo "==== target logs (tail) ====" >&2
-            sudo docker logs --tail=300 "${{ env.TARGET_UPSTREAM }}" >&2 || true
-            exit 1
+            # 2) 신규 스택 "서버 내부 localhost"로 헬스체크
+            - name: Local healthcheck on target
+              id: local_hc
+              uses: appleboy/ssh-action@v1.2.0
+              with:
+                host: ${{ secrets.LIVE_SERVER_IP }}
+                username: ${{ secrets.EC2_USER || 'ubuntu' }}
+                key: ${{ secrets.EC2_SSH_KEY }}
+                command_timeout: 15m
+                script: |
+                  set -euo pipefail
+                  PORT="${{ env.TARGET_PORT }}"
+                  PATHS=("/healthcheck" "/actuator/health" "/env" "/")
+                  for i in {1..60}; do  # 최대 5분
+                    for p in "${PATHS[@]}"; do
+                      if curl -fsS "http://127.0.0.1:${PORT}${p}" >/dev/null 2>&1; then
+                        echo "Healthy on ${PORT}${p}"
+                        exit 0
+                      fi
+                    done
+                    sleep 5
+                  done
+                  echo "Healthcheck failed on :${PORT}" >&2
+                  echo "==== listeners (host) ====" >&2
+                  sudo ss -ltnp | grep ":${PORT}\b" || true
+                  echo "==== docker ps ====" >&2
+                  sudo docker ps >&2 || true
+                  echo "==== target logs (tail) ====" >&2
+                  sudo docker logs --tail=300 "${{ env.TARGET_UPSTREAM }}" >&2 || true
+                  exit 1
 
         # 2-1) 실패 시 새 컨테이너 정리 (CPU 튐 방지)
       - name: Cleanup target on failure
