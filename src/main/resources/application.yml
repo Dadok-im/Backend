@@ -13,9 +13,6 @@ spring:
       blue: blue,common
       green: green,common
 
-server:
-  env: blue
-
 ---
 # =============== 공통 설정 ===============
 spring:
