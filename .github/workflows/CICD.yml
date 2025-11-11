@@ -86,7 +86,7 @@ jobs:
               echo "TARGET_PORT=8080"
             fi
 
-      # GitHub runner 환경변수로 반영 (로깅된 문자열을 파싱)
+      # GitHub runner 환경변수로 반영 (로깅된 문자열을 파싱) .
       - name: Capture decide outputs
         shell: bash
         run: |
