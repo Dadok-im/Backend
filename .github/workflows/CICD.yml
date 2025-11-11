@@ -59,7 +59,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      # 0) 현재 업스트림 확인 (nginx 변수파일 파싱)
       - name: Decide target upstream (SSH)
         id: decide
         uses: appleboy/ssh-action@v1.2.0
@@ -70,9 +69,8 @@ jobs:
           script: |
             set -euo pipefail
             NGINX="${{ secrets.NGINX_CONTAINER_NAME || 'nginxserver' }}"
-            CUR=$(sudo docker exec "$NGINX" sh -lc \
-              "awk '/set \\\$service_url/ {print \$3}' /etc/nginx/conf.d/service-env.inc" \
-              | sed -e 's/[;"]//g' -e 's#^https\?://##')
+            CUR=$(sudo docker exec "$NGINX" sh -lc "awk '/set \\\$service_url/ {print \$3}' /etc/nginx/conf.d/service-env.inc" \
+                  | sed -e 's/;//')
             [ "$CUR" = "blue" ] || [ "$CUR" = "green" ] || CUR="green"
             if [ "$CUR" = "blue" ]; then
               echo "CURRENT=blue"
@@ -97,48 +95,10 @@ jobs:
           echo "TARGET_PORT=${PORT:-8080}"      >> "$GITHUB_ENV"
           echo "IMAGE_TAG=${{ needs.build.outputs.image_tag }}" >> "$GITHUB_ENV"
 
-      # 1) 네트워크/DB 기동 & 헬스 & alias=db 보장 ( --env-file 포함 )
-      - name: Prepare DB (network + up + health + alias)
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.LIVE_SERVER_IP }}
-          username: ${{ secrets.EC2_USER || 'ubuntu' }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          command_timeout: 10m
-          script: |
-            set -euo pipefail
-            DB_COMPOSE_FILE="/home/ubuntu/docker-compose-db.yml"
-            DB_ENV_FILE="/home/ubuntu/.env.prod"
-
-            # 네트워크 존재 보장
-            sudo docker network ls | grep -q '\bapp_net\b' || sudo docker network create app_net
-
-            # compose 명령 선택
-            if docker compose version >/dev/null 2>&1; then C="docker compose"; else C="docker-compose"; fi
-
-            # DB 기동(프로젝트명 분리) + --env-file 사용
-            if [ -f "$DB_ENV_FILE" ]; then
-              $C -p db --env-file "$DB_ENV_FILE" -f "$DB_COMPOSE_FILE" up -d
-            else
-              $C -p db -f "$DB_COMPOSE_FILE" up -d
-            fi
-
-            # DB 헬스 대기(mysqladmin ping)
-            for i in $(seq 1 30); do
-              if sudo docker exec dadokim-db sh -lc 'mysqladmin ping -h 127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" --silent'; then
-                echo "DB healthy"; break; fi
-              sleep 2
-              [ "$i" = "30" ] && { echo "DB healthcheck timeout"; exit 1; }
-            done
-
-            # alias=db 보장 (이미 연결돼 있으면 조용히 통과)
-            sudo docker network connect --alias db app_net dadokim-db 2>/dev/null || true
-
-            # 점검 출력
-            sudo docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-            sudo docker network inspect app_net | awk '/"Name": "dadokim-db"/{f=1} f && /IPv4Address|Aliases/{print} /}/{f=0}' || true
-
-      # 2) 대상 스택 기동 (앱 프로젝트명 분리 + 리소스 상한)
+      # ─────────────────────────────────────────────────────────────
+      # 1) 대상 스택 기동 (리소스 상한 + 깔끔한 재기동)
+      #    ➜ 여기서만 compose 프로젝트명 분리(-p app_${TGT}) 추가
+      # ─────────────────────────────────────────────────────────────
       - name: Start target stack (resource-capped)
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -163,19 +123,20 @@ jobs:
             TAG="${{ env.IMAGE_TAG }}"
             COMPOSE_FILE="/home/ubuntu/docker-compose-${TGT}.yml"
             ENV_FILE="/home/ubuntu/.env.prod"
-            PROJECT="app_${TGT}"
+            PROJECT="app_${TGT}"   # ← 프로젝트명 분리(blue/green)
 
-            # 이미지 최신화
+            # 0) 이미지 최신화(sha 태그 우선, 없으면 latest)
             sudo docker pull "${IMG}:${TAG}" || true
             sudo docker tag  "${IMG}:${TAG}" "${IMG}:latest" || true
 
-            # 기존 대상 컨테이너 정리
+            # 1) 기존 대상 컨테이너 정리 (재생성 멈춤 방지)
             if sudo docker ps -a --format '{{.Names}}' | grep -qx "${TGT}"; then
               sudo docker stop -t 8 "${TGT}" || sudo docker kill "${TGT}" || true
               sudo docker rm -f   "${TGT}" || true
             fi
 
-            # 앱 기동(해당 프로젝트 범위에서만 --remove-orphans) + --env-file 사용
+            # 2) orphan 정리 + 빌드 금지
+            #    ※ -p로 앱 프로젝트 범위를 blue/green 각각 격리 → DB는 다른 프로젝트로 간주되어 영향 없음
             if [ -f "$ENV_FILE" ]; then
               sudo -E env DOCKER_CLIENT_TIMEOUT="$DOCKER_CLIENT_TIMEOUT" COMPOSE_HTTP_TIMEOUT="$COMPOSE_HTTP_TIMEOUT" \
                 $COMPOSE_CMD -p "$PROJECT" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --no-build --remove-orphans
@@ -183,14 +144,15 @@ jobs:
               $COMPOSE_CMD -p "$PROJECT" -f "$COMPOSE_FILE" up -d --no-build --remove-orphans
             fi
 
-            # 리소스 상한
+            # 3) 리소스 상한 (CPU/메모리 캡으로 스파이크 억제)
             sudo docker update --cpus="1.0" --memory="1024m" "${TGT}" || true
 
-            # 상태 출력 및 DNS 확인
+            # 4) 상태 출력
             sudo docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-            sudo docker exec "${TGT}" getent hosts db || { echo "DNS 'db' not resolvable from ${TGT}"; exit 1; }
 
-      # 3) 서버 내부 헬스체크
+      # ─────────────────────────────────────────────────────────────
+      # 2) 서버 내부에서 가벼운 헬스체크 (최대 90초)
+      # ─────────────────────────────────────────────────────────────
       - name: Local healthcheck on target
         id: local_hc
         uses: appleboy/ssh-action@v1.2.0
@@ -219,11 +181,8 @@ jobs:
             sudo docker ps >&2 || true
             echo "==== target logs (tail) ====" >&2
             sudo docker logs --tail=300 "${{ env.TARGET_UPSTREAM }}" >&2 || true
-            echo "==== DNS from target ====" >&2
-            sudo docker exec "${{ env.TARGET_UPSTREAM }}" getent hosts db >&2 || true
             exit 1
 
-      # 실패 시 정리
       - name: Cleanup target on failure
         if: failure()
         uses: appleboy/ssh-action@v1.2.0
@@ -236,7 +195,6 @@ jobs:
             sudo docker stop "${{ env.TARGET_UPSTREAM }}" || true
             sudo docker rm   "${{ env.TARGET_UPSTREAM }}" || true
 
-      # 4) Nginx 전환 (변수파일에 upstream 이름 저장)
       - name: Switch Nginx upstream to target
         if: success()
         uses: appleboy/ssh-action@v1.2.0
@@ -248,10 +206,8 @@ jobs:
             set -euo pipefail
             NGINX="${{ secrets.NGINX_CONTAINER_NAME || 'nginxserver' }}"
             TGT="${{ env.TARGET_UPSTREAM }}"
-            # 환경에 맞게 http 스킴을 쓰는 경우엔 'http://%s'로 변경
             sudo docker exec -i "$NGINX" sh -lc "printf 'set \$service_url %s;\n' \"$TGT\" > /etc/nginx/conf.d/service-env.inc && nginx -t && nginx -s reload"
 
-      # 5) 이전 컨테이너 정리
       - name: Stop old container (after switch)
         if: success()
         uses: appleboy/ssh-action@v1.2.0
@@ -265,7 +221,6 @@ jobs:
             sudo docker stop -t 5 "$OLD" || true
             sudo docker rm -f "$OLD" || true
 
-      # 6) 외부 헬스체크
       - name: Public health check via Nginx
         uses: jtalk/url-health-check-action@v3
         with:
