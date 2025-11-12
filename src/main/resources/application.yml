@@ -61,6 +61,11 @@ chatkey: ${GPT_API_KEY}
 kakao:
   rest-api-key: ${KAKAO_API_KEY}
 
+clova:
+  ocr:
+    url: ${CLOVA_OCR_URL}
+    secret: ${CLOVA_OCR_SECRET}
+
 logging:
   level:
     root: INFO
