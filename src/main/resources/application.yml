@@ -142,7 +142,7 @@ spring:
       client:
         registration:
           naver:
-            redirect-uri: http://16.184.57.174/login/oauth2/code/naver
+            redirect-uri: https://dadokim.o-r.kr/login/oauth2/code/naver
 
 server:
   port: 8080
@@ -162,7 +162,7 @@ spring:
       client:
         registration:
           naver:
-            redirect-uri: http://16.184.57.174/login/oauth2/code/naver
+            redirect-uri: https://dadokim.o-r.kr/login/oauth2/code/naver
 
 server:
   port: 8081
