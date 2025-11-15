@@ -77,17 +77,30 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of("http://localhost:5173"));
+
+        // 프론트 주소들 (로컬 + 추후 운영 도메인 추가 가능)
+        configuration.setAllowedOriginPatterns(List.of(
+                "http://localhost:5173",   // Vite 기본 포트
+                "https://dadokim.netlify.app" // netlify 배포 웹 사이트 포트
+                // "https://front.example.com"  // 나중에 운영 도메인 생기면 추가
+        ));
+
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
+
+        // ★ 쿠키/Authorization 같이 보내려면 true
         configuration.setAllowCredentials(true);
+
+        // 프론트에서 읽을 헤더
         configuration.setExposedHeaders(List.of("Authorization", "Set-Cookie"));
+
         configuration.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
         return source;
     }
+
 
     // 권한 계층 설정 (ADMIN 과 USER 간의 권한 계층을 설정하여 USER 권한에서 허용되는 API 는 ADMIN 권한에서도 허용이 된다는 것을 명시해준다.)
     @Bean

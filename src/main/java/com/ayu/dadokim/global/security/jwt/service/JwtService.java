@@ -10,6 +10,7 @@ import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.AllArgsConstructor;
+import org.springframework.http.ResponseCookie;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -68,13 +69,25 @@ public class JwtService {
         refreshRepository.flush(); // 같은 트랜잭션 내부라 : 삭제 -> 생성 문제 해결
         refreshRepository.save(newRefreshEntity);
 
-        // 기존 쿠키 제거
-        Cookie refreshCookie = new Cookie("refreshToken", null);
-        refreshCookie.setHttpOnly(true);
-        refreshCookie.setSecure(false);
-        refreshCookie.setPath("/");
-        refreshCookie.setMaxAge(10);
-        response.addCookie(refreshCookie);
+//        // 기존 쿠키 제거 (dev)
+//        Cookie refreshCookie = new Cookie("refreshToken", null);
+//        refreshCookie.setHttpOnly(true);
+//        refreshCookie.setSecure(false);
+//        refreshCookie.setPath("/");
+//        refreshCookie.setMaxAge(10);
+//        response.addCookie(refreshCookie);
+
+        // 🔹 SameSite / Secure 값을 설정에서 주입받아서 사용 (prod)
+        ResponseCookie refreshCookie = ResponseCookie.from("refreshToken", refreshToken)
+                .httpOnly(true)
+                .secure(true)            // local: false, prod: true
+                .path("/")
+                .maxAge(10)                      // 프론트에서 바로 /jwt/exchange 호출
+                .sameSite("None")        // local: Lax, prod: None
+                // .domain("your-domain.com")    // 나중에 도메인 생기면 여기서 공통 도메인 지정
+                .build();
+
+        response.addHeader("Set-Cookie", refreshCookie.toString());
 
         return new JWTResponse(newAccessToken, newRefreshToken);
     }

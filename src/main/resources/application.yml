@@ -61,6 +61,11 @@ chatkey: ${GPT_API_KEY}
 kakao:
   rest-api-key: ${KAKAO_API_KEY}
 
+clova:
+  ocr:
+    url: ${CLOVA_OCR_URL}
+    secret: ${CLOVA_OCR_SECRET}
+
 logging:
   level:
     root: INFO
@@ -137,7 +142,7 @@ spring:
       client:
         registration:
           naver:
-            redirect-uri: http://16.184.57.174/login/oauth2/code/naver
+            redirect-uri: https://dadokim.o-r.kr/login/oauth2/code/naver
 
 server:
   port: 8080
@@ -157,7 +162,7 @@ spring:
       client:
         registration:
           naver:
-            redirect-uri: http://16.184.57.174/login/oauth2/code/naver
+            redirect-uri: https://dadokim.o-r.kr/login/oauth2/code/naver
 
 server:
   port: 8081
