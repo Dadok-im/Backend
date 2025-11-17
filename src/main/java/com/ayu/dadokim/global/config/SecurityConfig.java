@@ -81,8 +81,9 @@ public class SecurityConfig {
         // 프론트 주소들 (로컬 + 추후 운영 도메인 추가 가능)
         configuration.setAllowedOriginPatterns(List.of(
                 "http://localhost:5173",   // Vite 기본 포트
-                "https://www.dadokim.cloud" // netlify 배포 웹 사이트 포트
-                // "https://front.example.com"  // 나중에 운영 도메인 생기면 추가
+                "https://www.dadokim.cloud",     // www 로 접속하는 경우
+                "https://dadokim.cloud"        // 배포 프론트
+
         ));
 
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
