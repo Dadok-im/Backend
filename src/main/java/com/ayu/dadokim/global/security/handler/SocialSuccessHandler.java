@@ -55,13 +55,13 @@ public class SocialSuccessHandler implements AuthenticationSuccessHandler {
                 .secure(true)            // local: false, prod: true
                 .path("/")
                 .maxAge(10)                      // 프론트에서 바로 /jwt/exchange 호출
-                .sameSite("None")        // local: Lax, prod: None
+                .sameSite("Lax")        // local: Lax, prod: None
                 // .domain("your-domain.com")    // 나중에 도메인 생기면 여기서 공통 도메인 지정
                 .build();
 
         response.addHeader("Set-Cookie", refreshCookie.toString());
 
-        response.sendRedirect("https://dadokim.netlify.app/cookie");
+        response.sendRedirect("https://api.dadokim.cloud/cookie");
     }
 
 }

@@ -83,7 +83,7 @@ public class JwtService {
                 .secure(true)            // local: false, prod: true
                 .path("/")
                 .maxAge(10)                      // 프론트에서 바로 /jwt/exchange 호출
-                .sameSite("None")        // local: Lax, prod: None
+                .sameSite("Lax")        // local: Lax, prod: None
                 // .domain("your-domain.com")    // 나중에 도메인 생기면 여기서 공통 도메인 지정
                 .build();
 
