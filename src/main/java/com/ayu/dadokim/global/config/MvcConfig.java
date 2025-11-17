@@ -12,7 +12,8 @@ public class MvcConfig implements WebMvcConfigurer {
     public void addCorsMappings(CorsRegistry corsRegistry) {
 
         corsRegistry.addMapping("/**")
-                .allowedOrigins("http://localhost:5173")
+                //.allowedOrigins("http://localhost:5173")
+                .allowedOrigins("https://www.dadokim.cloud")
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                 .allowCredentials(true)
                 .allowedHeaders("*")
