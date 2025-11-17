@@ -224,6 +224,6 @@ jobs:
       - name: Public health check via Nginx
         uses: jtalk/url-health-check-action@v3
         with:
-          url: https://dadokim.o-r.kr/healthcheck
+          url: https://api.dadokim.cloud/healthcheck
           max-attempts: 10
           retry-delay: 3s
