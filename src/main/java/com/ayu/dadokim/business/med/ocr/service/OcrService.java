@@ -87,20 +87,40 @@ public class OcrService {
         }
         String base64 = Base64.getEncoder().encodeToString(file.getBytes());
 
+        /**
+        1) 이미지 관련 로그
+         **/
+        System.out.println("[OCR] ORIGINAL_NAME=" + file.getOriginalFilename());
+        System.out.println("[OCR] SIZE=" + file.getSize());
+        System.out.println("[OCR] CONTENT_TYPE=" + file.getContentType());
+        System.out.println("[OCR] FMT=" + fmt);
+
         Map<String,Object> imageMap = new HashMap<>();
         imageMap.put("format", fmt);
         imageMap.put("name", "prescription");
         imageMap.put("data", base64);
 
+        /**
+         2) CLOVA로 나가는 JSON 로그 (base64는 너무 길면 생략해도 okay)
+         **/
         Map<String,Object> body = new HashMap<>();
         body.put("version", "V2");
         body.put("requestId", UUID.randomUUID().toString());
         body.put("timestamp", System.currentTimeMillis());
         body.put("images", Collections.singletonList(imageMap));
 
+        String reqJson = om.writeValueAsString(body);
+        System.out.println("[OCR] REQ_JSON=" + reqJson);
+
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.set("X-OCR-SECRET", ocrSecret);
+
+        /**
+         3) URL / Secret 길이 로그
+         **/
+        System.out.println("[OCR] OCR_URL=[" + ocrUrl + "]");
+        System.out.println("[OCR] OCR_SECRET_LEN=" + (ocrSecret == null ? 0 : ocrSecret.length()));
 
         HttpEntity<Map<String,Object>> entity = new HttpEntity<>(body, headers);
 

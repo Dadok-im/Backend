@@ -61,7 +61,7 @@ public class SocialSuccessHandler implements AuthenticationSuccessHandler {
 
         response.addHeader("Set-Cookie", refreshCookie.toString());
 
-        response.sendRedirect("https://dadokim.netlify.app/cookie");
+        response.sendRedirect("https://www.dadokim.cloud/cookie");
     }
 
 }
