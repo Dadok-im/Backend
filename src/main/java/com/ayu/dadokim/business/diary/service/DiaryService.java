@@ -32,6 +32,7 @@ public class DiaryService {
         DiaryEntity diary = diaryRepository.findByUserAndDate(user, request.getDate())
                 .map(d -> {
                     d.setDiaryText(request.getDiaryText());
+                    d.setMood(request.getMood());
                     return diaryRepository.save(d);
                 })
                 .orElseGet(() -> diaryRepository.save(
@@ -39,6 +40,7 @@ public class DiaryService {
                                 .user(user)
                                 .date(request.getDate())
                                 .diaryText(request.getDiaryText())
+                                .mood(request.getMood())
                                 .build()
                 ));
 

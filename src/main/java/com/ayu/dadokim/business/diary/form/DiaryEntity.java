@@ -25,6 +25,9 @@ public class DiaryEntity {
     @Column(columnDefinition = "TEXT")
     private String diaryText;
 
+    @Column
+    private String mood;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id")
     private UserEntity user;

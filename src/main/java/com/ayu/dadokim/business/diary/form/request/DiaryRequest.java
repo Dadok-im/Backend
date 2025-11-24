@@ -10,4 +10,6 @@ public class DiaryRequest {
 
     private LocalDate date;
     private String diaryText;
+    private String mood;
+
 }
