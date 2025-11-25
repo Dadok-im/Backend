@@ -14,6 +14,8 @@ public class DiaryResponse {
     private Long id;
     private LocalDate date;
     private String diaryText;
+    private String mood;
+
     private boolean exists; // 단건 조회 시 존재 여부 표시용
 
     public static DiaryResponse fromEntity(com.ayu.dadokim.business.diary.form.DiaryEntity diary) {
@@ -21,6 +23,7 @@ public class DiaryResponse {
                 .id(diary.getId())
                 .date(diary.getDate())
                 .diaryText(diary.getDiaryText())
+                .mood(diary.getMood())
                 .exists(true)
                 .build();
     }
