@@ -110,7 +110,7 @@ public class OcrService {
         body.put("images", Collections.singletonList(imageMap));
 
         String reqJson = om.writeValueAsString(body);
-        System.out.println("[OCR] REQ_JSON=" + reqJson);
+        // System.out.println("[OCR] REQ_JSON=" + reqJson);
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
